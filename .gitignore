@@ -1,0 +1,9 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+logs/*.log
+processing/*
+!processing/.gitkeep
+failed/*
+!failed/.gitkeep

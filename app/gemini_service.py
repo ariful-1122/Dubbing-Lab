@@ -24,7 +24,14 @@ class GeminiService:
         settings: Settings | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self._provider = provider or GeminiLiveProvider(self.settings)
+        if provider:
+            self._provider = provider
+        elif self.settings.elevenlabs_api_key.strip():
+            from app.providers.whisper_elevenlabs import WhisperElevenLabsProvider
+            self._provider = WhisperElevenLabsProvider(self.settings)
+        else:
+            self._provider = GeminiLiveProvider(self.settings)
+
 
     async def translate_audio(
         self,

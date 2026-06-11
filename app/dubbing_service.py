@@ -74,104 +74,265 @@ class DubbingService:
             else:
                 processing_video = source
 
-            # Step 2: Extract audio as 16 kHz PCM
-            extracted_pcm = work_dir / "original.pcm"
-            await asyncio.to_thread(
-                self.ffmpeg.extract_audio,
-                processing_video,
-                extracted_pcm,
-            )
-            original_duration = self.ffmpeg.get_pcm_duration(
-                extracted_pcm,
-                self.settings.input_sample_rate,
-            )
-            result.original_audio_duration = original_duration
+            use_voice_cloning = bool(self.settings.elevenlabs_api_key.strip())
 
-            # Steps 3–5: Translate via Gemini Live API
-            translation = await self.gemini.translate_audio(
-                extracted_pcm,
-                language,
-                job_id=job_id,
-                output_dir=work_dir,
-            )
-            result.api_call_count = translation.api_call_count
-            result.segments_processed = translation.segments_processed
-            result.translated_audio_duration = translation.output_duration_seconds
-
-            translated_pcm = translation.output_pcm_path
-            translated_wav = work_dir / "translated.wav"
-            await asyncio.to_thread(
-                self.ffmpeg.pcm_to_wav,
-                translated_pcm,
-                translated_wav,
-                self.settings.output_sample_rate,
-            )
-
-            # Step 7–8: Compare durations and log delta
-            duration_delta = original_duration - translation.output_duration_seconds
-            result.duration_delta_seconds = duration_delta
-
-            log_event(
-                logger,
-                logging.INFO,
-                "duration_comparison",
-                f"Duration delta: {duration_delta:.3f}s",
-                job_id=job_id,
-                original_duration_sec=original_duration,
-                translated_duration_sec=translation.output_duration_seconds,
-                delta_sec=duration_delta,
-            )
-
-            audio_for_mux = translated_wav
-
-            # Step 9: Tempo correction if drift exceeds threshold
-            if abs(duration_delta) > self.settings.sync_threshold_seconds:
-                tempo_ratio = translation.output_duration_seconds / original_duration
-                adjusted_wav = work_dir / "translated_adjusted.wav"
+            if use_voice_cloning:
+                # Upgraded Demucs + Whisper + ElevenLabs voice-cloning pipeline
+                
+                # A1. Extract full audio from video as WAV
+                original_wav = work_dir / "original.wav"
                 await asyncio.to_thread(
-                    self.ffmpeg.adjust_audio_tempo,
-                    translated_wav,
-                    tempo_ratio,
-                    adjusted_wav,
+                    self.ffmpeg.extract_audio_as_wav,
+                    processing_video,
+                    original_wav,
                 )
-                audio_for_mux = adjusted_wav
-                result.tempo_adjusted = True
-                result.translated_audio_duration = self.ffmpeg.get_duration(adjusted_wav)
+                
+                original_duration = await asyncio.to_thread(
+                    self.ffmpeg.get_duration,
+                    original_wav,
+                )
+                result.original_audio_duration = original_duration
+                
+                # A2. Run Demucs locally on original_wav to separate vocals and background
+                logger.info("Running Demucs stem separation on %s", original_wav.name)
+                import sys
+                import subprocess
+                
+                # Demucs CLI command
+                demucs_cmd = [
+                    sys.executable, "-m", "demucs.separate",
+                    "-n", self.settings.demucs_model,
+                    "--two-stems", "vocals",
+                    "-o", str(work_dir),
+                    str(original_wav)
+                ]
+                
+                # Run demucs in thread pool since it's CPU-heavy
+                def run_demucs():
+                    subprocess.run(demucs_cmd, check=True)
+                
+                await asyncio.to_thread(run_demucs)
+                
+                # Locate separated stems
+                demucs_out_dir = work_dir / self.settings.demucs_model / original_wav.stem
+                vocals_wav = demucs_out_dir / "vocals.wav"
+                no_vocals_wav = demucs_out_dir / "no_vocals.wav"
+                
+                if not vocals_wav.exists() or not no_vocals_wav.exists():
+                    raise FileNotFoundError(
+                        f"Demucs failed to produce vocals or background stem. Expected at {demucs_out_dir}"
+                    )
+                
+                # A3. Convert vocals WAV to PCM (16kHz 16-bit mono) as expected by providers
+                extracted_pcm = work_dir / "vocals.pcm"
+                await asyncio.to_thread(
+                    self.ffmpeg.convert_audio_format,
+                    vocals_wav,
+                    extracted_pcm,
+                    "pcm",
+                )
+                
+                # A4. Translate and synthesize dubbed vocals via ElevenLabs
+                translation = await self.gemini.translate_audio(
+                    extracted_pcm,
+                    language,
+                    job_id=job_id,
+                    output_dir=work_dir,
+                )
+                result.api_call_count = translation.api_call_count
+                result.segments_processed = translation.segments_processed
+                result.translated_audio_duration = translation.output_duration_seconds
+                
+                # A5. Convert returned dubbed PCM vocals to WAV
+                translated_pcm = translation.output_pcm_path
+                translated_wav = work_dir / "translated.wav"
+                await asyncio.to_thread(
+                    self.ffmpeg.pcm_to_wav,
+                    translated_pcm,
+                    translated_wav,
+                    self.settings.output_sample_rate,
+                )
+                
+                # A6. Compare durations and log delta
+                duration_delta = original_duration - translation.output_duration_seconds
+                result.duration_delta_seconds = duration_delta
+                
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "duration_comparison",
+                    f"Duration delta: {duration_delta:.3f}s",
+                    job_id=job_id,
+                    original_duration_sec=original_duration,
+                    translated_duration_sec=translation.output_duration_seconds,
+                    delta_sec=duration_delta,
+                )
+                
+                audio_for_mux = translated_wav
+                
+                # A7. Tempo correction if drift exceeds threshold
+                if abs(duration_delta) > self.settings.sync_threshold_seconds:
+                    tempo_ratio = translation.output_duration_seconds / original_duration
+                    adjusted_wav = work_dir / "translated_adjusted.wav"
+                    await asyncio.to_thread(
+                        self.ffmpeg.adjust_audio_tempo,
+                        translated_wav,
+                        tempo_ratio,
+                        adjusted_wav,
+                    )
+                    audio_for_mux = adjusted_wav
+                    result.tempo_adjusted = True
+                    result.translated_audio_duration = self.ffmpeg.get_duration(adjusted_wav)
+                    
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "duration_mismatch",
+                        f"Applied tempo correction ratio={tempo_ratio:.4f}",
+                        job_id=job_id,
+                        tempo_ratio=tempo_ratio,
+                        threshold_sec=self.settings.sync_threshold_seconds,
+                    )
+                
+                # A8. Normalize the dubbed vocals
+                normalized_wav = work_dir / "translated_normalized.wav"
+                await asyncio.to_thread(
+                    self.ffmpeg.normalize_audio,
+                    audio_for_mux,
+                    normalized_wav,
+                )
+                
+                # A9. Mix normalized dubbed vocals with background music stem (no_vocals.wav)
+                mixed_wav = work_dir / "final_mixed.wav"
+                await asyncio.to_thread(
+                    self.ffmpeg.mix_audio,
+                    normalized_wav,
+                    no_vocals_wav,
+                    mixed_wav,
+                    self.settings.background_volume,
+                )
+                
+                # A10. Convert mixed audio to AAC for final video muxing
+                final_audio_aac = work_dir / "final_mixed.aac"
+                await asyncio.to_thread(
+                    self.ffmpeg.convert_audio_format,
+                    mixed_wav,
+                    final_audio_aac,
+                    "aac",
+                )
+                
+                # A11. Mux the final mixed audio track back into the video
+                output_name = f"{processing_video.stem}_dubbed_{language}.mp4"
+                output_path = self.settings.output_path / output_name
+                await asyncio.to_thread(
+                    self.ffmpeg.replace_audio,
+                    processing_video,
+                    final_audio_aac,
+                    output_path,
+                )
+                
+            else:
+                # Original pipeline (replacing original audio completely)
+                
+                # Step 2: Extract audio as 16 kHz PCM
+                extracted_pcm = work_dir / "original.pcm"
+                await asyncio.to_thread(
+                    self.ffmpeg.extract_audio,
+                    processing_video,
+                    extracted_pcm,
+                )
+                original_duration = self.ffmpeg.get_pcm_duration(
+                    extracted_pcm,
+                    self.settings.input_sample_rate,
+                )
+                result.original_audio_duration = original_duration
+
+                # Steps 3–5: Translate via Gemini Live API
+                translation = await self.gemini.translate_audio(
+                    extracted_pcm,
+                    language,
+                    job_id=job_id,
+                    output_dir=work_dir,
+                )
+                result.api_call_count = translation.api_call_count
+                result.segments_processed = translation.segments_processed
+                result.translated_audio_duration = translation.output_duration_seconds
+
+                translated_pcm = translation.output_pcm_path
+                translated_wav = work_dir / "translated.wav"
+                await asyncio.to_thread(
+                    self.ffmpeg.pcm_to_wav,
+                    translated_pcm,
+                    translated_wav,
+                    self.settings.output_sample_rate,
+                )
+
+                # Step 7–8: Compare durations and log delta
+                duration_delta = original_duration - translation.output_duration_seconds
+                result.duration_delta_seconds = duration_delta
 
                 log_event(
                     logger,
                     logging.INFO,
-                    "duration_mismatch",
-                    f"Applied tempo correction ratio={tempo_ratio:.4f}",
+                    "duration_comparison",
+                    f"Duration delta: {duration_delta:.3f}s",
                     job_id=job_id,
-                    tempo_ratio=tempo_ratio,
-                    threshold_sec=self.settings.sync_threshold_seconds,
+                    original_duration_sec=original_duration,
+                    translated_duration_sec=translation.output_duration_seconds,
+                    delta_sec=duration_delta,
                 )
 
-            # Step 10: Normalize and convert to AAC for muxing
-            normalized_aac = work_dir / "translated_normalized.aac"
-            normalized_wav = work_dir / "translated_normalized.wav"
-            await asyncio.to_thread(
-                self.ffmpeg.normalize_audio,
-                audio_for_mux,
-                normalized_wav,
-            )
-            await asyncio.to_thread(
-                self.ffmpeg.convert_audio_format,
-                normalized_wav,
-                normalized_aac,
-                "aac",
-            )
+                audio_for_mux = translated_wav
 
-            # Step 11: Mux translated audio into video
-            output_name = f"{processing_video.stem}_dubbed_{language}.mp4"
-            output_path = self.settings.output_path / output_name
-            await asyncio.to_thread(
-                self.ffmpeg.replace_audio,
-                processing_video,
-                normalized_aac,
-                output_path,
-            )
+                # Step 9: Tempo correction if drift exceeds threshold
+                if abs(duration_delta) > self.settings.sync_threshold_seconds:
+                    tempo_ratio = translation.output_duration_seconds / original_duration
+                    adjusted_wav = work_dir / "translated_adjusted.wav"
+                    await asyncio.to_thread(
+                        self.ffmpeg.adjust_audio_tempo,
+                        translated_wav,
+                        tempo_ratio,
+                        adjusted_wav,
+                    )
+                    audio_for_mux = adjusted_wav
+                    result.tempo_adjusted = True
+                    result.translated_audio_duration = self.ffmpeg.get_duration(adjusted_wav)
+
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "duration_mismatch",
+                        f"Applied tempo correction ratio={tempo_ratio:.4f}",
+                        job_id=job_id,
+                        tempo_ratio=tempo_ratio,
+                        threshold_sec=self.settings.sync_threshold_seconds,
+                    )
+
+                # Step 10: Normalize and convert to AAC for muxing
+                normalized_aac = work_dir / "translated_normalized.aac"
+                normalized_wav = work_dir / "translated_normalized.wav"
+                await asyncio.to_thread(
+                    self.ffmpeg.normalize_audio,
+                    audio_for_mux,
+                    normalized_wav,
+                )
+                await asyncio.to_thread(
+                    self.ffmpeg.convert_audio_format,
+                    normalized_wav,
+                    normalized_aac,
+                    "aac",
+                )
+
+                # Step 11: Mux translated audio into video
+                output_name = f"{processing_video.stem}_dubbed_{language}.mp4"
+                output_path = self.settings.output_path / output_name
+                await asyncio.to_thread(
+                    self.ffmpeg.replace_audio,
+                    processing_video,
+                    normalized_aac,
+                    output_path,
+                )
+
 
             result.output_file = output_path
             result.status = JobStatus.COMPLETED
@@ -194,7 +355,7 @@ class DubbingService:
                 api_call_count=result.api_call_count,
             )
 
-        except (FFmpegError, GeminiTranslationError, OSError, ValueError) as exc:
+        except (FFmpegError, GeminiTranslationError, OSError, ValueError, RuntimeError) as exc:
             result.status = JobStatus.FAILED
             result.error_message = str(exc)
             result.completed_at = datetime.now(timezone.utc)

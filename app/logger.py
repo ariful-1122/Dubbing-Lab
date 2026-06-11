@@ -91,6 +91,14 @@ def setup_logging(settings: Settings | None = None) -> None:
     file_handler.setLevel(settings.log_level)
     root.addHandler(file_handler)
 
+    # Ensure stdout and stderr support UTF-8 to prevent UnicodeEncodeError in Windows consoles
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8")
+            except Exception:
+                pass
+
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(HumanFormatter())
     console_handler.setLevel(settings.log_level)

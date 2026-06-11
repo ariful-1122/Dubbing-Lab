@@ -28,6 +28,10 @@ class Settings(BaseSettings):
 
     # API credentials (validated at startup)
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+    elevenlabs_api_key: str = Field(default="", alias="ELEVENLABS_API_KEY")
+    elevenlabs_voice_id: str = Field(default="", alias="ELEVENLABS_VOICE_ID")
+    elevenlabs_model_id: str = Field(default="eleven_v3", alias="ELEVENLABS_MODEL_ID")
+
 
     # Language and directories
     target_language: str = Field(default="bn", alias="TARGET_LANGUAGE")
@@ -73,6 +77,11 @@ class Settings(BaseSettings):
     receive_idle_seconds: float = Field(default=5.0, alias="RECEIVE_IDLE_SECONDS")
     silence_threshold_seconds: float = Field(default=3.0, alias="SILENCE_THRESHOLD_SECONDS")
     silence_amplitude_threshold: int = Field(default=500, alias="SILENCE_AMPLITUDE_THRESHOLD")
+
+    # Local Models & Mixing (Whisper, Demucs, ElevenLabs)
+    whisper_model: str = Field(default="base", alias="WHISPER_MODEL")
+    demucs_model: str = Field(default="htdemucs", alias="DEMUCS_MODEL")
+    background_volume: float = Field(default=0.5, alias="BACKGROUND_VOLUME")
 
     # Watcher
     file_stability_seconds: float = Field(default=3.0, alias="FILE_STABILITY_SECONDS")

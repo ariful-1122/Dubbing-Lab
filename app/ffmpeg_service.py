@@ -363,3 +363,59 @@ class FFmpegService:
         )
         self._run_ffmpeg(stream, output_path)
         return output_path
+
+    def extract_audio_as_wav(self, video_path: Path, output_wav_path: Path) -> Path:
+        """Extract audio from video as a WAV file."""
+        logger.info("Extracting audio as WAV from %s", video_path)
+        stream = (
+            ffmpeg.input(str(video_path))
+            .audio
+            .output(str(output_wav_path), format="wav")
+            .overwrite_output()
+        )
+        self._run_ffmpeg(stream, output_wav_path)
+        return output_wav_path
+
+    def slice_audio(self, audio_path: Path, start_sec: float, duration_sec: float, output_path: Path) -> Path:
+        """Extract a time-based segment from an audio file using FFmpeg."""
+        logger.info("Slicing audio %s from %.2fs for %.2fs", audio_path.name, start_sec, duration_sec)
+        stream = (
+            ffmpeg.input(str(audio_path), ss=start_sec)
+            .output(str(output_path), t=duration_sec)
+            .overwrite_output()
+        )
+        self._run_ffmpeg(stream, output_path)
+        return output_path
+
+    def mix_audio(
+        self,
+        vocals_path: Path,
+        background_path: Path,
+        output_path: Path,
+        background_volume: float = 0.5,
+    ) -> Path:
+        """Mix vocals and background audio stems using FFmpeg amix filter."""
+        logger.info("Mixing vocals %s and background %s", vocals_path.name, background_path.name)
+        
+        vocals = ffmpeg.input(str(vocals_path))
+        background = ffmpeg.input(str(background_path)).filter("volume", background_volume)
+        
+        if output_path.suffix.lower() == ".wav":
+            acodec = "pcm_s16le"
+            kwargs = {}
+        else:
+            acodec = "aac"
+            kwargs = {"audio_bitrate": "192k"}
+            
+        stream = (
+            ffmpeg.filter([vocals, background], "amix", inputs=2, duration="longest")
+            .output(
+                str(output_path),
+                acodec=acodec,
+                **kwargs
+            )
+            .overwrite_output()
+        )
+        self._run_ffmpeg(stream, output_path)
+        return output_path
+

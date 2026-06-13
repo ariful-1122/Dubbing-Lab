@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     max_retries: int = Field(default=3, alias="MAX_RETRIES")
     retry_base_delay_seconds: float = Field(default=2.0, alias="RETRY_BASE_DELAY_SECONDS")
     sync_threshold_seconds: float = Field(default=0.5, alias="SYNC_THRESHOLD_SECONDS")
+    manual_tts_overlap_threshold_percent: float = Field(
+        default=10.0,
+        alias="MANUAL_TTS_OVERLAP_THRESHOLD_PERCENT",
+    )
 
     # Video formats
     supported_formats: str = Field(
@@ -81,7 +85,32 @@ class Settings(BaseSettings):
     # Local Models & Mixing (Whisper, Demucs, ElevenLabs)
     whisper_model: str = Field(default="base", alias="WHISPER_MODEL")
     demucs_model: str = Field(default="htdemucs", alias="DEMUCS_MODEL")
+    demucs_shifts: int = Field(default=0, alias="DEMUCS_SHIFTS")
     background_volume: float = Field(default=0.5, alias="BACKGROUND_VOLUME")
+
+    # Gemini TTS settings
+    gemini_tts_model: str = Field(
+        default="gemini-3.1-flash-tts-preview",
+        alias="GEMINI_TTS_MODEL",
+    )
+    gemini_tts_female_voice: str = Field(
+        default="Achernar",
+        alias="GEMINI_TTS_FEMALE_VOICE",
+    )
+    gemini_tts_male_voice: str = Field(
+        default="Fenrir",
+        alias="GEMINI_TTS_MALE_VOICE",
+    )
+
+    # Edge TTS settings
+    edge_tts_female_voice: str = Field(
+        default="",
+        alias="EDGE_TTS_FEMALE_VOICE",
+    )
+    edge_tts_male_voice: str = Field(
+        default="",
+        alias="EDGE_TTS_MALE_VOICE",
+    )
 
     # Watcher
     file_stability_seconds: float = Field(default=3.0, alias="FILE_STABILITY_SECONDS")

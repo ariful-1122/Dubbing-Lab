@@ -9,8 +9,42 @@ from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
+import contextvars
 
 from app.config import Settings, get_settings
+
+active_job_id: contextvars.ContextVar[str] = contextvars.ContextVar("active_job_id", default="")
+
+
+class JobFileHandler(logging.Handler):
+    """Logging handler that routes logs to a job-specific log file based on active_job_id context."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        job_id = active_job_id.get()
+        if not job_id:
+            # Fallback to checking extra fields
+            extra_fields = getattr(record, "extra_fields", {})
+            job_id = extra_fields.get("job_id") or getattr(record, "job_id", None)
+
+        if job_id:
+            try:
+                settings = get_settings()
+                processing_dir = settings.processing_path
+                job_dir = None
+                if processing_dir.exists():
+                    for p in processing_dir.iterdir():
+                        if p.is_dir() and (p.name == job_id or p.name.endswith(f"_{job_id}")):
+                            job_dir = p
+                            break
+                if job_dir:
+                    log_file = job_dir / "job.log"
+                    # Format log message
+                    msg = self.format(record)
+                    with log_file.open("a", encoding="utf-8") as f:
+                        f.write(msg + "\n")
+            except Exception:
+                pass
+
 
 _CONFIGURED = False
 
@@ -90,6 +124,11 @@ def setup_logging(settings: Settings | None = None) -> None:
     file_handler.setFormatter(JSONFormatter())
     file_handler.setLevel(settings.log_level)
     root.addHandler(file_handler)
+
+    job_file_handler = JobFileHandler()
+    job_file_handler.setFormatter(HumanFormatter())
+    job_file_handler.setLevel(settings.log_level)
+    root.addHandler(job_file_handler)
 
     # Ensure stdout and stderr support UTF-8 to prevent UnicodeEncodeError in Windows consoles
     for stream in (sys.stdout, sys.stderr):

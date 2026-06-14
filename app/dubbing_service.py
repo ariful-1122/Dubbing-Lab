@@ -78,9 +78,10 @@ class DubbingService:
         video_path: Path,
         target_language: str | None = None,
         force_live_translate: bool = False,
+        job_id: str | None = None,
     ) -> DubbingJobResult:
         """Run the complete dubbing workflow for a single video file."""
-        job_id = new_job_id()
+        job_id = job_id or new_job_id()
         language = (target_language or self.settings.target_language).lower()
         source = video_path.resolve()
         started = time.monotonic()

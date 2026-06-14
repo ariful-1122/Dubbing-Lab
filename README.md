@@ -1,25 +1,26 @@
-# 🎙️ Gemini Video Dubbing Application (DUB_SOFT)
+# 🎙️ Gemini Video Dubbing Application (Dubbing Lab)
 
 Automatically translate and dub video files into other languages using Google's state-of-the-art **Gemini Live Translate API** (`gemini-3.5-live-translate-preview`) and other local speech tools. 
 
-Simply drop your source video files into the `input/` folder, configure your settings, and receive fully dubbed videos in the `output/` folder. This application is optimized for **local desktop usage** with minimal external complexity.
+Dubbing Lab includes both a **command-line interface** and an **interactive Web Dashboard/Editor UI** to manage, review, and fine-tune your dubbing projects locally.
 
 ---
 
 ## 🚀 Key Features
 
+* **Interactive Web Dashboard & Editor**: An HSL-tailored, modern React-based UI to upload videos, configure dubbing workflows, listen to/verify extracted vocal segments, manually override translations, and trigger synthetic voice generation step-by-step.
 * **Real-time Live Translation**: Streams audio directly to the Gemini Live Translate WebSocket API in 100ms chunks to produce immediate vocal translations.
 * **ElevenLabs Voice Cloning**: Automatically extracts original speaker vocal clips, clones the voice signature via ElevenLabs, and generates dubbed audio in the speaker's own voice.
 * **Local Background Separation**: Utilizes Demucs to isolate background music and sound effects, mixing them back into the final dubbed video at customizable volumes.
 * **Timing & Drift Alignment**: Automatically adjusts translated audio tempo using FFmpeg if duration drift exceeds a defined threshold (preventing overlaps and sync issues).
-* **Multi-Step Manual Dubbing Workflow**: Allows preparing vocal segments, editing translations in a `translations.json` file, customizing genders, selecting specific local Edge TTS or Gemini TTS voices, and compiling manually.
+* **Multi-Step Manual Dubbing Workflow**: Allows preparing vocal segments, editing translations in a `translations.json` file (or directly in the UI), customizing genders, selecting specific local Edge TTS or Gemini TTS voices, and compiling manually.
 * **Large Video Segmentation**: Splits videos longer than 10 minutes into smaller segments to comply with API session limits, translating them in parallel or sequence, and stitching them seamlessly.
 
 ---
 
 ## 🔄 Core Workflows & Pipelines
 
-The application determines its operational flow based on your environment keys and CLI flags:
+The application determines its operational flow based on your environment keys, CLI flags, or settings chosen in the Web UI:
 
 ### 1. Fully Automated Gemini Live (Default / Live Mode)
 * **Trigger**: Defaults when running the app without ElevenLabs keys, or by specifying the `--live-translate` flag.
@@ -32,8 +33,8 @@ The application determines its operational flow based on your environment keys a
 * **Best for**: Premium content where keeping the original speaker's voice is critical.
 
 ### 3. Semi-Manual Multi-Step TTS Pipeline
-* **Trigger**: Commanded via CLI flags (`--prepare`, `--gemini-tts` / `--edge-tts`, and `--stitch`).
-* **How it works**: Separates and transcribes the audio into a `translations.json` file. The user reviews and manually edits translations or genders. Next, the user generates synthetic voices (using Gemini or Edge TTS) or places manual audio files inside a `manual_tts/` folder. Finally, the segments are stitched and muxed into the video.
+* **Trigger**: Commanded via CLI flags (`--prepare`, `--gemini-tts` / `--edge-tts`, and `--stitch`) or executed step-by-step in the **Web Editor Dashboard**.
+* **How it works**: Separates and transcribes the audio into a `translations.json` file. The user reviews and manually edits translations, speaker voice gender, or selects parts to keep original. Next, the user generates synthetic voices (using Gemini or Edge TTS) and compiles/stitches the segments into the final video.
 * **Best for**: Maximum quality assurance and full control over every single translated line.
 
 ---
@@ -41,8 +42,9 @@ The application determines its operational flow based on your environment keys a
 ## 📦 Prerequisites
 
 1. **Python 3.10+**
-2. **FFmpeg** and **FFprobe** installed and available on your system `PATH`.
-3. **Gemini API key** from [Google AI Studio](https://aistudio.google.com/).
+2. **Node.js 18+** (Optional, required if building or developing the frontend React UI)
+3. **FFmpeg** and **FFprobe** installed and available on your system `PATH`.
+4. **Gemini API key** from [Google AI Studio](https://aistudio.google.com/).
 
 ### Installing FFmpeg
 
@@ -80,7 +82,7 @@ ffprobe -version
    .venv\Scripts\activate.bat
    ```
 
-3. Install all required dependencies:
+3. Install all required Python dependencies:
    ```bash
    pip install -r requirements.txt
    ```
@@ -91,6 +93,71 @@ ffprobe -version
    cp .env.example .env
    ```
    Open the `.env` file and add your `GEMINI_API_KEY`.
+
+---
+
+## 🎮 Operations Guide
+
+### 1. Launching the Web UI (Recommended)
+
+You can run the application in two different web modes depending on whether you want to build the static UI bundle or develop with live hot-reloading.
+
+#### Option A: Standalone Launcher (Single command, Port 8000)
+Runs the entire web application on a single port. If not already built, this compiles the React files and serves them from FastAPI:
+```bash
+python run_web.py
+```
+*Pass `--force-build` if you want to explicitly rebuild the frontend assets.*
+
+#### Option B: Live Development Mode (For code edits and hot-reloading)
+Start the backend API and frontend dev server in separate terminal windows:
+* **Terminal 1 (Backend)**:
+  ```bash
+  .venv\Scripts\activate
+  uvicorn app.api:app --reload --port 8000
+  ```
+* **Terminal 2 (Frontend)**:
+  ```bash
+  cd frontend
+  npm install
+  npm run dev
+  ```
+Open **`http://localhost:5173`** in your browser. All API requests starting with `/api` are automatically proxied to the backend running on port 8000.
+
+---
+
+### 2. CLI Core Workflows
+
+* **Process All Videos in Input Directory**:
+  Scan `input/` folder, dub all supported files, and exit:
+  ```bash
+  python run.py
+  ```
+
+* **Process a Single Specific File**:
+  ```bash
+  python run.py --file input/sample.mp4
+  ```
+
+* **Force Live Translation Mode**:
+  By-passes ElevenLabs voice cloning, translating directly using Gemini Live Translate WebSocket:
+  ```bash
+  python run.py --live-translate --file input/sample.mp4
+  ```
+
+* **Override Target Language**:
+  Specify a language code at runtime to override `.env` defaults:
+  ```bash
+  python run.py --language hi
+  python run.py --file input/sample.mp4 --language es
+  ```
+
+* **Semi-Manual Workflow via CLI**:
+  For detailed control over each step without the Web UI:
+  1. **Prepare**: `python run.py --prepare --file input/sample.mp4 --language bn`
+  2. **Edit**: Modify `translations.json` inside the generated processing folder.
+  3. **TTS**: Generate speech using `python run.py --gemini-tts --job-id <job_id>` or `python run.py --edge-tts --job-id <job_id>`
+  4. **Stitch**: Mix and compile the final video using `python run.py --stitch --job-id <job_id>`
 
 ---
 
@@ -128,79 +195,12 @@ The application validates BCP-47 codes on startup. Supported default languages:
 
 ---
 
-## 🎮 Operations Guide
-
-### Mode A: Automated Batch and Watcher Execution
-
-* **Process All Videos in Input Directory**:
-  Scan `input/` folder, dub all supported files, and exit:
-  ```bash
-  python run.py
-  ```
-
-* **Process a Single Specific File**:
-  ```bash
-  python run.py --file input/sample.mp4
-  ```
-
-* **Force Live Translation Mode**:
-  By-passes ElevenLabs voice cloning, translating directly using Gemini Live Translate WebSocket:
-  ```bash
-  python run.py --live-translate --file input/sample.mp4
-  ```
-
-* **Override Target Language**:
-  Specify a language code at runtime to override `.env` defaults:
-  ```bash
-  python run.py --language hi
-  python run.py --file input/sample.mp4 --language es
-  ```
-
----
-
-### Mode B: Semi-Manual Multi-Step Workflow
-
-For maximum editing flexibility and speech customization, use the multi-step manual workflow. See [MANUAL_TTS_GUIDE.md](file:///f:/DUB_SOFT/MANUAL_TTS_GUIDE.md) for full details.
-
-#### Step 1: Prepare the Video
-Extract background audio, slice vocals, transcribe, translate, and build metadata:
-```bash
-python run.py --prepare --file input/your_video.mp4 --language bn
-```
-This generates a job folder in `processing/your_video_<job_id>/` containing `translations.json` and a directory of vocal snippets.
-
-#### Step 2: Edit Translations
-Open `processing/your_video_<job_id>/translations.json` to edit translated text. You can toggle specific segments:
-* **Gender**: Set `"gender": "male"` or `"gender": "female"` to adjust speaker voice assignments.
-* **Keep Original**: Set `"status": "keep_original"` on non-verbal segments (laughs, coughs, background screams) to preserve original source sound instead of generating robotic voice-overs.
-
-#### Step 3: Generate Speech Audio
-Generate synthetic wav files using one of the following engines:
-* **Gemini TTS** (`gemini-3.1-flash-tts-preview`):
-  ```bash
-  python run.py --gemini-tts --job-id <job_id>
-  ```
-* **Microsoft Edge TTS** (uses local voices):
-  ```bash
-  python run.py --edge-tts --job-id <job_id>
-  ```
-* **Manual synthetic overrides**:
-  Download custom audio segments from ElevenLabs or other TTS interfaces, saving them as `segment_000.wav` (or `.mp3`) inside the job's `manual_tts/` folder.
-
-#### Step 4: Stitch and Mux
-Overlay the vocal segments back onto the timeline, mix with background audio stems, and mux them into the final video file:
-```bash
-python run.py --stitch --job-id <job_id>
-```
-Your final video will be compiled and outputted to the `output/` directory.
-
----
-
 ## 📂 Project Structure Map
 
 ```
 DUB_SOFT/
 ├── app/
+│   ├── api.py              # FastAPI endpoints and static web routing
 │   ├── config.py           # Settings loader & path resolver
 │   ├── models.py           # Job structures & Pydantic models
 │   ├── logger.py           # JSON logging utility
@@ -213,6 +213,10 @@ DUB_SOFT/
 │       ├── base.py         # Abstract SpeechTranslationProvider interface
 │       ├── gemini_live.py  # WebSocket streaming wrapper
 │       └── whisper_elevenlabs.py # Automated Voice Cloning backend
+├── frontend/               # React SPA Web UI client
+│   ├── src/                # React components and hooks
+│   ├── dist/               # Static compiled JS/HTML bundle served by FastAPI
+│   └── vite.config.ts      # Vite dev server and proxy definitions
 ├── input/                  # Place video files here
 ├── output/                 # Dubbed videos generated here
 ├── processing/             # Active job work folders
@@ -220,7 +224,8 @@ DUB_SOFT/
 ├── logs/                   # System runtime logs (app.log)
 ├── .env.example            # Example configuration
 ├── requirements.txt        # Package dependencies
-├── run.py                  # Entry script
+├── run.py                  # CLI entry script
+├── run_web.py              # Web app launcher (build + serve)
 ├── MANUAL_TTS_GUIDE.md     # Multi-step TTS operation guide
 ├── Agents.md               # AI coding agent developer guide
 └── README.md               # Main software guide
@@ -240,8 +245,8 @@ If FFmpeg is installed but the command fails:
 
 ### Output video has empty or silent audio
 * Confirm your source video actually has sound.
-* Check the logs in `logs/app.log` for any API failures or service timeout exceptions.
-* Check that your `TARGET_LANGUAGE` is different from the source spoken language (unless `ECHO_TARGET_LANGUAGE=true` is set).
+* Check the logs in the Web UI log terminal or `logs/app.log` for any API failures or service exceptions.
+* Check that your `TARGET_LANGUAGE` is different from the source spoken language.
 
 ### Mismatched audio durations or speed changes
 Slight alterations in video speech timing are normal when translating languages since some translations take more words. If the drift is greater than `SYNC_THRESHOLD_SECONDS`, FFmpeg tempo filters (`atempo`) are automatically applied to scale output vocals to fit the timeline.

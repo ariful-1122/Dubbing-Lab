@@ -98,7 +98,7 @@ graph TD
 * `run_web.py` - Convenience script to build the React frontend SPA via Vite and launch the Uvicorn server hosting the web application.
 * `app/` - Core source folder:
   * [api.py](file:///f:/DUB_SOFT/app/api.py) - FastAPI backend API application. Defines endpoints for job control, configuration, file upload/streaming, and serving static built React assets.
-  * [config.py](file:///f:/DUB_SOFT/app/config.py) - Loaded settings via Pydantic Settings. Pre-defines BCP-47 languages, defaults, path resolution, and injects `FFMPEG_BIN_DIR` into the system PATH.
+  * [config.py](file:///f:/DUB_SOFT/app/config.py) - Loaded settings via Pydantic Settings. Pre-defines BCP-47 languages (English, Bengali, Hindi, Urdu, Spanish, Arabic, German), defaults, path resolution, and injects `FFMPEG_BIN_DIR` into the system PATH.
   * [models.py](file:///f:/DUB_SOFT/app/models.py) - Data models representing jobs (`DubbingJobResult`, `TranslationResult`, etc.) and enum states.
   * [logger.py](file:///f:/DUB_SOFT/app/logger.py) - Structured JSON/console logging utility. Tracks application lifecycle events (starts, retries, finishes, failures).
   * [ffmpeg_service.py](file:///f:/DUB_SOFT/app/ffmpeg_service.py) - Low-level wrapper for `ffmpeg` and `ffprobe` operations. Manages extraction, pacing, tempo correction, normalization, mixing, slicing, and muxing.

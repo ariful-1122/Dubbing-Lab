@@ -11,7 +11,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # BCP-47 codes supported by this application.
-SUPPORTED_LANGUAGES: frozenset[str] = frozenset({"bn", "hi", "ur", "es", "ar"})
+SUPPORTED_LANGUAGES: frozenset[str] = frozenset({"bn", "hi", "ur", "es", "ar", "en", "de"})
 
 # Project root (parent of app/).
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

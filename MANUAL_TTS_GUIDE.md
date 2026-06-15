@@ -12,7 +12,7 @@ To separate vocals/background audio, transcribe, translate, and slice vocal segm
 python run.py --prepare --file input/your_video.mp4 --language bn
 ```
 
-*Replace `input/your_video.mp4` with your source file and `bn` with your target language code (e.g., `bn`, `hi`, `ur`, `es`, `ar`).*
+*Replace `input/your_video.mp4` with your source file and `bn` with your target language code (e.g., `bn`, `hi`, `ur`, `es`, `ar`, `en`, `de`).*
 
 ---
 

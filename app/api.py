@@ -40,7 +40,9 @@ SUPPORTED_LANGUAGES_MAP = {
     "hi": "Hindi (हिन्दी)",
     "ur": "Urdu (اردو)",
     "es": "Spanish (Español)",
-    "ar": "Arabic (العربية)"
+    "ar": "Arabic (العربية)",
+    "en": "English",
+    "de": "German (Deutsch)"
 }
 
 # In-memory tracking of active running jobs
@@ -307,10 +309,13 @@ def get_config():
 
 @app.get("/api/languages")
 def get_languages():
-    """Retrieve BCP-47 supported languages list."""
+    """Retrieve BCP-47 supported languages list in user-specified order."""
+    preferred_order = ["en", "bn", "hi", "de", "es", "ar", "ur"]
+    ordered_codes = [code for code in preferred_order if code in SUPPORTED_LANGUAGES]
+    other_codes = sorted(list(SUPPORTED_LANGUAGES - set(ordered_codes)))
     return [
         {"code": code, "name": SUPPORTED_LANGUAGES_MAP.get(code, code.upper())}
-        for code in sorted(SUPPORTED_LANGUAGES)
+        for code in (ordered_codes + other_codes)
     ]
 
 

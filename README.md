@@ -1,60 +1,150 @@
-# 🎙️ Gemini Video Dubbing Application (Dubbing Lab)
+# 🎙️ Dubbing Lab: High-Fidelity Video Dubbing Application
 
-Automatically translate and dub video files into other languages using Google's state-of-the-art **Gemini Live Translate API** (`gemini-3.5-live-translate-preview`) and other local speech tools. 
+Dubbing Lab is a high-fidelity local desktop application designed to translate and dub video files from a source language into a target language. Built using **FastAPI (Python)** on the backend and **React (TypeScript & TailwindCSS)** on the frontend, it integrates state-of-the-art AI services (Google Gemini, ElevenLabs, Faster-Whisper, Edge-TTS) with advanced multi-track audio processing pipelines.
 
-Dubbing Lab includes both a **command-line interface** and an **interactive Web Dashboard/Editor UI** to manage, review, and fine-tune your dubbing projects locally.
+![Dubbing Lab Dashboard](docs/dashboard_preview.png)
 
 ---
 
-## 🚀 Key Features
+## ⚡ Why This Project Stands Out (For Recruiters & Tech Leads)
 
-* **Interactive Web Dashboard & Editor**: An HSL-tailored, modern React-based UI to upload videos, configure dubbing workflows, listen to/verify extracted vocal segments, manually override translations, and trigger synthetic voice generation step-by-step.
-* **Real-time Live Translation**: Streams audio directly to the Gemini Live Translate WebSocket API in 100ms chunks to produce immediate vocal translations.
-* **ElevenLabs Voice Cloning**: Automatically extracts original speaker vocal clips, clones the voice signature via ElevenLabs, and generates dubbed audio in the speaker's own voice.
-* **Local Background Separation**: Utilizes Demucs to isolate background music and sound effects, mixing them back into the final dubbed video at customizable volumes.
-* **Timing & Drift Alignment**: Automatically adjusts translated audio tempo using FFmpeg if duration drift exceeds a defined threshold (preventing overlaps and sync issues).
-* **Multi-Step Manual Dubbing Workflow**: Allows preparing vocal segments, editing translations in a `translations.json` file (or directly in the UI), customizing genders, selecting specific local Edge TTS or Gemini TTS voices, and compiling manually.
-* **Large Video Segmentation**: Splits videos longer than 10 minutes into smaller segments to comply with API session limits, translating them in parallel or sequence, and stitching them seamlessly.
+This codebase serves as a showcase for production-ready full-stack software engineering, demonstrating:
+* **Real-time Streaming & WebSockets**: Handles low-latency 100ms chunked PCM audio streaming to the Gemini Live Translate WebSocket API, managing state, reconnection, and pacing under rate limits.
+* **Complex Multi-Track Audio Engineering**: Leverages `ffmpeg` and `demucs` to isolate background music/effects, split vocal stems, adjust tempos dynamically using sub-second audio drift alignment, and remux multi-channel streams back into the final container.
+* **State & Job Management in Python**: Implements an async job runner utilizing FastAPI's `BackgroundTasks` to prevent thread-blocking, complete with detailed JSON structured logging (`app.logger`), state persistence, and robust validation.
+* **Modular Frontend Architecture**: Built with Vite + TS, featuring custom React hooks, reusable UI elements, responsive state management, and real-time polling to update progress bars and log streams.
+* **Configurable & Clean Code**: Adheres to modern Python standards (Pydantic Settings, PEP-8) and strict TypeScript safety rules, making it highly extensible and maintainable.
+
+---
+
+## 🏗️ System Architecture & Data Flow
+
+The following Mermaid diagram outlines the complete system data flow and process separation across the frontend, FastAPI backend, local processors, and external AI service integrations:
+
+```mermaid
+graph TD
+    subgraph WebInterface ["Web UI (React SPA in Browser)"]
+        WebClient["Web Client Dashboard"]
+        TimelineEditor["Interactive Timeline Editor"]
+    end
+
+    subgraph EntryPoints ["Entry Points"]
+        RunPy["run.py (CLI Router)"]
+        RunWebPy["run_web.py (FastAPI Server)"]
+    end
+
+    subgraph ServiceOrchestration ["Service & Orchestration Layer"]
+        DubService["app.dubbing_service.DubbingService"]
+        FFmpegSvc["app.ffmpeg_service.FFmpegService"]
+        GeminiSvc["app.gemini_service.GeminiService"]
+    end
+
+    subgraph AudioProcessing ["Stems & Vocal Processing"]
+        Demucs["Demucs (Vocal Separation)"]
+        Whisper["faster-whisper (Local Transcription)"]
+        FFmpegSync["FFmpeg Tempo Adjuster (atempo)"]
+        FFmpegMix["FFmpeg Audio Mixer & Muxer"]
+    end
+
+    subgraph AlServices ["AI Speech & Translation Engines"]
+        GeminiLive["Gemini Live Translate API (WebSocket)"]
+        GeminiFlash["Gemini Flash Lite (Text Translator)"]
+        GeminiTTS["Gemini Flash TTS (Voice Generator)"]
+        ElevenLabs["ElevenLabs API (Voice Cloning)"]
+        EdgeTTS["Microsoft Edge TTS (Local Engine)"]
+    end
+
+    %% Client Communication
+    WebClient -->|1. Upload & Configure| RunWebPy
+    TimelineEditor -->|4. Play / Edit / Trigger TTS| RunWebPy
+    
+    %% Initialization
+    RunWebPy -->|BackgroundTasks| DubService
+    RunPy -->|CLI Command| DubService
+
+    %% Core Process Flow
+    DubService -->|Option A: Stream PCM| GeminiLive
+    GeminiLive -->|Translated PCM Chunks| FFmpegSync
+
+    DubService -->|Option B & C: Extract Audio| FFmpegSvc
+    FFmpegSvc -->|Original Audio| Demucs
+    Demucs -->|Vocal Stems| Whisper
+    Demucs -->|Background Tracks| FFmpegMix
+
+    Whisper -->|Segments & Timestamps| GeminiFlash
+    GeminiFlash -->|translations.json| TimelineEditor
+
+    %% Synthesis & Overrides
+    TimelineEditor -->|Generate Vocals| GeminiTTS
+    TimelineEditor -->|Generate Vocals| EdgeTTS
+    TimelineEditor -->|Generate Cloned Vocals| ElevenLabs
+
+    GeminiTTS & EdgeTTS & ElevenLabs -->|Dubbed Stems| FFmpegSync
+    FFmpegSync -->|Paced Vocals| FFmpegMix
+    FFmpegMix -->|Muxed Video| DubbedVideo["Dubbed Video (output/)"]
+```
 
 ---
 
 ## 🔄 Core Workflows & Pipelines
 
-The application determines its operational flow based on your environment keys, CLI flags, or settings chosen in the Web UI:
+The application determines its operational flow based on your environment configurations, CLI flags, or actions triggered in the Web UI:
 
 ### 1. Fully Automated Gemini Live (Default / Live Mode)
-* **Trigger**: Defaults when running the app without ElevenLabs keys, or by specifying the `--live-translate` flag.
-* **How it works**: Audio is extracted as mono 16 kHz PCM and streamed to `gemini-3.5-live-translate-preview`. Dubbed 24 kHz audio is received, checked for duration drift, tempo-corrected if needed, normalized, and muxed back into the video.
-* **Best for**: Rapid, low-latency automated translation.
+* **Trigger**: Executed when no ElevenLabs credentials are set, or via the `--live-translate` CLI flag.
+* **Mechanism**: Extracts video audio as 16 kHz mono PCM, streams it to the Gemini Live Translate WebSocket API (`gemini-3.5-live-translate-preview`) in 100ms intervals, captures returned 24 kHz audio chunks, runs duration drift alignment, and remuxes the audio.
+* **Best for**: Low-latency, fast automated dubbing.
 
 ### 2. Automated Whisper + ElevenLabs Voice-Cloning
-* **Trigger**: Occurs automatically if `ELEVENLABS_API_KEY` is present in your `.env` file and `--live-translate` is not set.
-* **How it works**: Splits audio into vocal and background tracks using `demucs`. Transcribes vocals locally via Whisper (`faster-whisper`), translates transcripts via Gemini, and uses a 15-second vocal snippet to clone the speaker's voice on ElevenLabs. Cloned voice generates the dubbed track, which is mixed with the original background music and muxed back.
-* **Best for**: Premium content where keeping the original speaker's voice is critical.
+* **Trigger**: Triggered automatically if `ELEVENLABS_API_KEY` is present in `.env` and `--live-translate` is not set.
+* **Mechanism**: Separates vocals from background audio using `demucs`. Local `faster-whisper` transcribes the vocals, Gemini translates the text, and ElevenLabs clones the speaker's voice using a 15-second training clip to synthesize the target language vocals. Finally, cloned vocals are mixed with the background track and remuxed into the video.
+* **Best for**: High-end content requiring the preservation of the original speaker's unique voice signature.
 
 ### 3. Semi-Manual Multi-Step TTS Pipeline
-* **Trigger**: Commanded via CLI flags (`--prepare`, `--gemini-tts` / `--edge-tts`, and `--stitch`) or executed step-by-step in the **Web Editor Dashboard**.
-* **How it works**: Separates and transcribes the audio into a `translations.json` file. The user reviews and manually edits translations, speaker voice gender, or selects parts to keep original. Next, the user generates synthetic voices (using Gemini or Edge TTS) and compiles/stitches the segments into the final video.
-* **Best for**: Maximum quality assurance and full control over every single translated line.
+* **Trigger**: Commanded step-by-step in the **Web Editor Dashboard** or using sequential CLI flags (`--prepare`, `--gemini-tts` / `--edge-tts`, and `--stitch`).
+* **Mechanism**: Performs separation and local transcription, saving segments to `translations.json`. The developer/editor uses the dashboard to review transcriptions, tweak translations, configure voice genders, play individual vocal stems, generate TTS (using Microsoft Edge TTS or Gemini Flash TTS), and stitch/mix the final dubbed video.
+* **Best for**: Professional quality assurance where absolute translation accuracy and vocal pacing are required.
+
+---
+
+## 🛠️ Tech Stack & Dependencies
+
+* **Backend**:
+  * **Framework**: [FastAPI](file:///f:/DUB_SOFT/app/api.py) (Asynchronous REST API endpoints & static folder routing)
+  * **Server**: [Uvicorn](file:///f:/DUB_SOFT/run_web.py) (Asynchronous ASGI server)
+  * **Configuration**: [Pydantic Settings](file:///f:/DUB_SOFT/app/config.py) (Environment loading, validation, and auto-injection)
+  * **Folder Watcher**: `watchdog` (Monitors folder uploads dynamically)
+* **Vocal & Audio Processing**:
+  * **Vocal Separation**: Meta's `demucs` (Hybrid Transformer Demucs for vocal isolation)
+  * **Local Transcription**: `faster-whisper` (CTranslate2 port of OpenAI's Whisper model)
+  * **Process Control**: [FFmpeg Wrapper](file:///f:/DUB_SOFT/app/ffmpeg_service.py) (Custom subprocess controls for audio splicing, tempo shifting, mixing, and remuxing)
+* **AI Speech & Synthesis**:
+  * **Google Gemini Live**: `google-genai` (WebSocket binary streaming)
+  * **Edge TTS**: `edge-tts` (Microsoft Edge TTS engine interface)
+  * **Voice Cloning**: ElevenLabs REST API wrapper
+* **Frontend**:
+  * **Framework**: [Vite + React (TypeScript)](file:///f:/DUB_SOFT/frontend/src/App.tsx)
+  * **Styling**: TailwindCSS & Vanilla CSS
+  * **Waveforms**: Raw SVG canvas rendering for audio timeline segments
 
 ---
 
 ## 📦 Prerequisites
 
+Ensure you have the following installed on your system:
 1. **Python 3.10+**
-2. **Node.js 18+** (Optional, required if building or developing the frontend React UI)
-3. **FFmpeg** and **FFprobe** installed and available on your system `PATH`.
-4. **Gemini API key** from [Google AI Studio](https://aistudio.google.com/).
+2. **Node.js 18+** (Required only for compilation or development of the React frontend UI)
+3. **FFmpeg** and **FFprobe** installed and added to your system `PATH` (or specified in `.env`).
 
 ### Installing FFmpeg
 
 | Operating System | Command |
 |---|---|
-| **Windows** | Run `winget install FFmpeg` or download from [ffmpeg.org](https://ffmpeg.org/download.html) |
-| **macOS** | Run `brew install ffmpeg` |
-| **Linux (Debian/Ubuntu)** | Run `sudo apt update && sudo apt install ffmpeg` |
+| **Windows** | `winget install FFmpeg` or download from [ffmpeg.org](https://ffmpeg.org/download.html) |
+| **macOS** | `brew install ffmpeg` |
+| **Linux (Ubuntu)** | `sudo apt update && sudo apt install ffmpeg` |
 
-Verify FFmpeg is correctly installed by running:
+Verify FFmpeg is correctly installed:
 ```bash
 ffmpeg -version
 ffprobe -version
@@ -62,194 +152,143 @@ ffprobe -version
 
 ---
 
-## 🛠️ Installation & Setup
+## 🚀 Installation & Setup
 
-1. Clone or navigate to the project root directory:
+1. **Clone the Repository & Navigate to Folder**:
    ```bash
+   git clone <your-repo-url>
    cd DUB_SOFT
    ```
 
-2. Create and activate a virtual environment:
+2. **Create and Activate a Virtual Environment**:
    ```bash
-   # Create virtual environment
    python -m venv .venv
-
-   # Activate on Linux/macOS
-   source .venv/bin/activate
-   # Activate on Windows (PowerShell)
+   
+   # On Windows (PowerShell):
    .venv\Scripts\Activate.ps1
-   # Activate on Windows (Command Prompt)
-   .venv\Scripts\activate.bat
+   # On macOS/Linux:
+   source .venv/bin/activate
    ```
 
-3. Install all required Python dependencies:
+3. **Install Dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-4. Configure environment settings:
+4. **Setup Environment Variables**:
+   Copy `.env.example` to `.env` and fill in your Gemini API key:
    ```bash
-   # Copy example environment configuration
    cp .env.example .env
    ```
-   Open the `.env` file and add your `GEMINI_API_KEY`.
+   *Modify the `GEMINI_API_KEY` in `.env` with your API key from Google AI Studio.*
 
 ---
 
 ## 🎮 Operations Guide
 
-### 1. Launching the Web UI (Recommended)
+### 1. Launching the Interactive Web UI
 
-You can run the application in two different web modes depending on whether you want to build the static UI bundle or develop with live hot-reloading.
+The application can be run in two modes:
 
-#### Option A: Standalone Launcher (Single command, Port 8000)
-Runs the entire web application on a single port. If not already built, this compiles the React files and serves them from FastAPI:
+#### Option A: Standalone Launcher (Single Command, Port 8000)
+Runs the backend server and automatically serves the pre-built React frontend. If not built yet, this compiles the frontend React bundle:
 ```bash
 python run_web.py
 ```
-*Pass `--force-build` if you want to explicitly rebuild the frontend assets.*
+*Tip: Pass `--force-build` to force Vite to rebuild the frontend assets.*
 
-#### Option B: Live Development Mode (For code edits and hot-reloading)
-Start the backend API and frontend dev server in separate terminal windows:
-* **Terminal 1 (Backend)**:
+#### Option B: Live Development Mode (Hot-Reloading)
+Start the backend and frontend separately to support live code editing:
+* **Terminal 1 (Backend FastAPI)**:
   ```bash
   .venv\Scripts\activate
   uvicorn app.api:app --reload --port 8000
   ```
-* **Terminal 2 (Frontend)**:
+* **Terminal 2 (Frontend React Dev Server)**:
   ```bash
   cd frontend
   npm install
   npm run dev
   ```
-Open **`http://localhost:5173`** in your browser. All API requests starting with `/api` are automatically proxied to the backend running on port 8000.
+Open **`http://localhost:5173`** in your browser. All API requests (`/api/*`) are proxied to the FastAPI server at port 8000.
 
 ---
 
 ### 2. CLI Core Workflows
 
-* **Process All Videos in Input Directory**:
-  Scan `input/` folder, dub all supported files, and exit:
+* **Scan Directory and Process All Videos**:
+  Processes all videos located in the configured `input/` folder and saves dubbed videos to `output/`:
   ```bash
   python run.py
   ```
 
-* **Process a Single Specific File**:
+* **Process a Specific Video File**:
   ```bash
   python run.py --file input/sample.mp4
   ```
 
 * **Force Live Translation Mode**:
-  By-passes ElevenLabs voice cloning, translating directly using Gemini Live Translate WebSocket:
+  By-passes ElevenLabs voice cloning, using direct Gemini Live Translate WebSocket streaming:
   ```bash
   python run.py --live-translate --file input/sample.mp4
   ```
 
-* **Override Target Language**:
-  Specify a language code at runtime to override `.env` defaults:
+* **Target Language Selection**:
+  Override target language defaults at runtime (e.g. Bengali `bn`, Hindi `hi`, Spanish `es`, English `en`, German `de`):
   ```bash
-  python run.py --language hi
   python run.py --file input/sample.mp4 --language es
   ```
 
 * **Semi-Manual Workflow via CLI**:
-  For detailed control over each step without the Web UI:
-  1. **Prepare**: `python run.py --prepare --file input/sample.mp4 --language bn`
-  2. **Edit**: Modify `translations.json` inside the generated processing folder.
-  3. **TTS**: Generate speech using `python run.py --gemini-tts --job-id <job_id>` or `python run.py --edge-tts --job-id <job_id>`
-  4. **Stitch**: Mix and compile the final video using `python run.py --stitch --job-id <job_id>`
+  1. **Prepare**: Extract vocal tracks and generate transcriptions to `translations.json`:
+     ```bash
+     python run.py --prepare --file input/sample.mp4 --language hi
+     ```
+  2. **Edit**: Open the processing folder and update `translations.json` with manual adjustments.
+  3. **TTS**: Synthesize vocals:
+     ```bash
+     python run.py --gemini-tts --job-id <job_id>
+     # OR
+     python run.py --edge-tts --job-id <job_id>
+     ```
+  4. **Stitch**: Compile the final video:
+     ```bash
+     python run.py --stitch --job-id <job_id>
+     ```
 
 ---
 
-## ⚙️ Configuration (`.env`)
+## ⚙️ Configuration Parameters (`.env`)
 
-Configure settings in `.env` to customize paths, translation models, and backend options:
-
-| Variable | Default Value | Description |
+| Variable | Default | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | *(required)* | Your Google Gemini API Key. |
-| `TARGET_LANGUAGE` | `bn` | Target language BCP-47 code (e.g., `bn`, `hi`, `ur`, `es`, `ar`). |
-| `INPUT_DIR` | `input` | Folder scanned for source video files. |
+| `GEMINI_API_KEY` | *(Required)* | Google Gemini API Key from Google AI Studio. |
+| `TARGET_LANGUAGE` | `bn` | Default target BCP-47 language code (e.g. `bn`, `hi`, `ur`, `es`, `ar`, `en`, `de`). |
+| `INPUT_DIR` | `input` | Folder containing source videos. |
 | `OUTPUT_DIR` | `output` | Folder where dubbed output videos are saved. |
-| `PROCESSING_DIR` | `processing` | Temporary storage for active files, audio slices, and metadata. |
-| `FAILED_DIR` | `failed` | Backup location for files from failed runs. |
-| `FFMPEG_BIN_DIR` | `None` | Custom path to FFmpeg binary directory (e.g., `C:\ffmpeg\bin`), automatically loaded if set. |
-| `ELEVENLABS_API_KEY` | `None` | (Optional) Your ElevenLabs API key for voice cloning. |
-| `ELEVENLABS_VOICE_ID` | `None` | (Optional) ElevenLabs voice ID to use instead of automatic cloning. |
-| `DEMUCS_MODEL` | `htdemucs` | Vocal separation model. Options: `htdemucs` (faster), `htdemucs_ft` (slower, higher quality). |
-| `DEMUCS_SHIFTS` | `0` | Demucs shift separation precision. Set to `2` or `4` for improved isolation (slower). |
-| `BACKGROUND_VOLUME` | `0.5` | Mixing volume level (0.0 to 1.0) of background audio tracks. |
+| `PROCESSING_DIR` | `processing` | Temporary storage for vocals separation and segments JSON. |
+| `FFMPEG_BIN_DIR` | `None` | Custom path to FFmpeg binaries (e.g. `C:\ffmpeg\bin`), loaded automatically. |
+| `ELEVENLABS_API_KEY` | `None` | (Optional) Your ElevenLabs API key for voice-cloning synthesis. |
+| `DEMUCS_MODEL` | `htdemucs` | Separation model. `htdemucs` (faster) or `htdemucs_ft` (higher quality). |
+| `BACKGROUND_VOLUME` | `0.5` | Volume multiplier (0.0 to 1.0) for background music mixed in. |
 | `GEMINI_TTS_MODEL` | `gemini-3.1-flash-tts-preview` | Model used for Gemini TTS generation. |
-| `GEMINI_TTS_FEMALE_VOICE` | `Achernar` | Default female voice for Gemini TTS. |
-| `GEMINI_TTS_MALE_VOICE` | `Fenrir` | Default male voice for Gemini TTS. |
-
-### Supported Languages (BCP-47)
-The application validates BCP-47 codes on startup. Supported default languages:
-* **Bengali (`bn`)**
-* **Hindi (`hi`)**
-* **Urdu (`ur`)**
-* **Spanish (`es`)**
-* **Arabic (`ar`)**
-
-*To support additional languages, append BCP-47 language codes to `SUPPORTED_LANGUAGES` in [app/config.py](file:///f:/DUB_SOFT/app/config.py).*
 
 ---
 
-## 📂 Project Structure Map
+## 📂 Codebase File Map
 
-```
-DUB_SOFT/
-├── app/
-│   ├── api.py              # FastAPI endpoints and static web routing
-│   ├── config.py           # Settings loader & path resolver
-│   ├── models.py           # Job structures & Pydantic models
-│   ├── logger.py           # JSON logging utility
-│   ├── ffmpeg_service.py   # FFmpeg commands wrapper
-│   ├── gemini_service.py   # Translation provider facade
-│   ├── dubbing_service.py  # Pipeline orchestrator & step managers
-│   ├── watcher.py          # Watchdog folder watcher (idle)
-│   ├── main.py             # CLI parser and command router
-│   └── providers/
-│       ├── base.py         # Abstract SpeechTranslationProvider interface
-│       ├── gemini_live.py  # WebSocket streaming wrapper
-│       └── whisper_elevenlabs.py # Automated Voice Cloning backend
-├── frontend/               # React SPA Web UI client
-│   ├── src/                # React components and hooks
-│   ├── dist/               # Static compiled JS/HTML bundle served by FastAPI
-│   └── vite.config.ts      # Vite dev server and proxy definitions
-├── input/                  # Place video files here
-├── output/                 # Dubbed videos generated here
-├── processing/             # Active job work folders
-├── failed/                 # Backup directories for failed tasks
-├── logs/                   # System runtime logs (app.log)
-├── .env.example            # Example configuration
-├── requirements.txt        # Package dependencies
-├── run.py                  # CLI entry script
-├── run_web.py              # Web app launcher (build + serve)
-├── MANUAL_TTS_GUIDE.md     # Multi-step TTS operation guide
-├── Agents.md               # AI coding agent developer guide
-└── README.md               # Main software guide
-```
-
----
-
-## 🔍 Troubleshooting & FAQs
-
-### Error: `GEMINI_API_KEY is not set`
-Copy `.env.example` to `.env` and fill in your API key from Google AI Studio. Ensure you are running commands in the project root containing your `.env` file.
-
-### Error: `ffmpeg not found on PATH`
-If FFmpeg is installed but the command fails:
-1. Make sure to restart your terminal after installing.
-2. If FFmpeg is placed in a custom folder, add its `bin` location to the `FFMPEG_BIN_DIR` variable in `.env` (e.g. `FFMPEG_BIN_DIR=C:\ffmpeg\bin`).
-
-### Output video has empty or silent audio
-* Confirm your source video actually has sound.
-* Check the logs in the Web UI log terminal or `logs/app.log` for any API failures or service exceptions.
-* Check that your `TARGET_LANGUAGE` is different from the source spoken language.
-
-### Mismatched audio durations or speed changes
-Slight alterations in video speech timing are normal when translating languages since some translations take more words. If the drift is greater than `SYNC_THRESHOLD_SECONDS`, FFmpeg tempo filters (`atempo`) are automatically applied to scale output vocals to fit the timeline.
+* [run.py](file:///f:/DUB_SOFT/run.py) - CLI command router and script entry point.
+* [run_web.py](file:///f:/DUB_SOFT/run_web.py) - Automates Vite build compilation and launches Uvicorn.
+* [app/api.py](file:///f:/DUB_SOFT/app/api.py) - FastAPI app defining jobs, config, upload, log stream, and edit actions.
+* [app/config.py](file:///f:/DUB_SOFT/app/config.py) - Pydantic settings loading and Windows system PATH injections.
+* [app/models.py](file:///f:/DUB_SOFT/app/models.py) - Pydantic models for jobs, segments, and API inputs.
+* [app/logger.py](file:///f:/DUB_SOFT/app/logger.py) - Standardized JSON logger logging runtime events.
+* [app/ffmpeg_service.py](file:///f:/DUB_SOFT/app/ffmpeg_service.py) - Subprocess execution wrapper for all FFmpeg audio/video operations.
+* [app/dubbing_service.py](file:///f:/DUB_SOFT/app/dubbing_service.py) - Core pipeline orchestrator handling automated and manual steps.
+* [app/providers/base.py](file:///f:/DUB_SOFT/app/providers/base.py) - Base speech translation class defining interfaces.
+* [app/providers/gemini_live.py](file:///f:/DUB_SOFT/app/providers/gemini_live.py) - Connects and streams PCM chunks to Gemini Live Translate WebSocket.
+* [app/providers/whisper_elevenlabs.py](file:///f:/DUB_SOFT/app/providers/whisper_elevenlabs.py) - Connects Demucs, local faster-whisper, and ElevenLabs.
+* [frontend/src/App.tsx](file:///f:/DUB_SOFT/frontend/src/App.tsx) - Primary React frontend entry component coordinating dashboards and panels.
 
 ---
 

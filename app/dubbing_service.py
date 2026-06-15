@@ -1198,6 +1198,10 @@ class DubbingService:
             return "es-ES-AlvaroNeural" if is_male else "es-ES-ElviraNeural"
         elif lang == "ar":
             return "ar-EG-ShakirNeural" if is_male else "ar-EG-SalmaNeural"
+        elif lang == "en":
+            return "en-US-BrianNeural" if is_male else "en-US-EmmaNeural"
+        elif lang == "de":
+            return "de-DE-ConradNeural" if is_male else "de-DE-KatjaNeural"
         else:
             return "en-US-BrianNeural" if is_male else "en-US-EmmaNeural"
 

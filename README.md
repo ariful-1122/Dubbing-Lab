@@ -6,7 +6,7 @@ Dubbing Lab is a high-fidelity local desktop application designed to translate a
 
 ---
 
-## ⚡ Why This Project Stands Out (For Recruiters & Tech Leads)
+## ⚡ Why This Project Stands Out?
 
 This codebase serves as a showcase for production-ready full-stack software engineering, demonstrating:
 * **Real-time Streaming & WebSockets**: Handles low-latency 100ms chunked PCM audio streaming to the Gemini Live Translate WebSocket API, managing state, reconnection, and pacing under rate limits.
